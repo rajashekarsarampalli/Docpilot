@@ -5,13 +5,13 @@ databases:
     user: docpilot
 
 services:
-  # Django web service
+  # Django web service & Bot (Running together)
   - type: web
     name: docpilot-web
     runtime: python
     plan: free
     buildCommand: "./build.sh"
-    startCommand: "gunicorn config.wsgi:application --bind 0.0.0.0:$PORT"
+    startCommand: "bash start.sh"
     envVars:
       - key: DATABASE_URL
         fromDatabase:
@@ -23,37 +23,9 @@ services:
         value: "False"
       - key: ALLOWED_HOSTS
         value: ".onrender.com"
-      - key: GROQ_API_KEY
-        sync: false
-      - key: ILOVEPDF_PUBLIC_KEY
-        sync: false
-      - key: ILOVEPDF_SECRET_KEY
-        sync: false
-      - key: PYTHON_VERSION
-        value: "3.11.11"
-
-  # Telegram bot background worker
-  - type: worker
-    name: docpilot-bot
-    runtime: python
-    plan: starter
-    buildCommand: "pip install -r requirements.txt"
-    startCommand: "python manage.py run_bot"
-    envVars:
-      - key: DATABASE_URL
-        fromDatabase:
-          name: docpilot-db
-          property: connectionString
-      - key: SECRET_KEY
-        fromService:
-          type: web
-          name: docpilot-web
-          envVarKey: SECRET_KEY
-      - key: DEBUG
-        value: "False"
-      - key: GROQ_API_KEY
-        sync: false
       - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: GROQ_API_KEY
         sync: false
       - key: ILOVEPDF_PUBLIC_KEY
         sync: false
