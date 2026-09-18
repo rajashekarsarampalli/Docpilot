@@ -1,0 +1,54 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Django
+db.sqlite3
+db.sqlite3-journal
+*.log
+
+# Environment
+.env
+
+# Media uploads (user data)
+media/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Distribution
+dist/
+build/
+*.egg-info/
+*.egg
+
+# Virtual environments
+venv/
+env/
+.venv/
+
+# Qodo
+.qodo/
+
+# Backup / Recovery
+Backup/
+Recovery/
+doom/
+
+# Collected static files
+staticfiles/
+
+# SQLite databases
+*.sqlite3
+*.sqlite3-journal
