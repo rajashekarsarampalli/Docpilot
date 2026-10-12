@@ -28,6 +28,12 @@ class Command(BaseCommand):
 
         load_dotenv()
 
+        import logging
+        logging.basicConfig(
+            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+            level=logging.INFO,
+        )
+
         from telegram_bot.bot import build_app
 
         self.stdout.write(self.style.SUCCESS("[*] Initializing DocPilot Telegram bot..."))

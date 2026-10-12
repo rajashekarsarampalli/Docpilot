@@ -41,7 +41,6 @@ try:
 except RuntimeError:
     pass  # already set up (e.g. called from manage.py run_bot)
 
-from django.conf import settings
 from django.contrib.auth import authenticate
 from django.contrib.auth.models import User
 from telegram import Update, InputFile, InlineKeyboardButton, InlineKeyboardMarkup
@@ -65,7 +64,6 @@ from files.services.file_tools import (
     list_folders,
     media_root,
     relative_media_path,
-    get_or_create_default_folder,
     workspace_stats,
 )
 
@@ -400,7 +398,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         )
 
     # Update conversation memory
-    memory.append({"user": prompt, "bot": response_text[:200]})
+    memory.append({"user": prompt, "bot": response_text[:3500]})
     if len(memory) > MAX_MEMORY:
         memory = memory[-MAX_MEMORY:]
     context.user_data["memory"] = memory
@@ -1050,7 +1048,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await safe_send(
             update,
             f"✅ *File uploaded successfully!*\n\n"
-            f"📄 Name: `{file_name}`\n"
+            f"📄 Name: *{safe_display_name}* (`{file_name}`)\n"
             f"🆔 ID: {db_file.id}\n"
             f"📂 Folder: uploads\n"
             f"💾 Size: {_format_size(actual_size)}\n\n"
@@ -1247,7 +1245,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     # Update conversation memory
-    memory.append({"user": user_text, "bot": response_text[:200]})
+    memory.append({"user": user_text, "bot": response_text[:3500]})
     if len(memory) > MAX_MEMORY:
         memory = memory[-MAX_MEMORY:]
     context.user_data["memory"] = memory

@@ -170,6 +170,8 @@ RULES:
 - If the file is already in the requested destination folder, use finish.
 - If the latest result confirms the user's request is complete, use finish.
 - If a tool failed, choose the next appropriate action.
+- When creating documents or calling tools, never output meta-commentary, notes, apologies, or remarks like '(Note: ...)' inside parameter values. Parameter values must contain ONLY the actual document text.
+- If the user asks to save, export, or convert previous content (such as a quiz, summary, or text) into a file and the content is referenced from the conversation history, extract the full text from the history without truncating or adding commentary notes.
 - Choose exactly one action.
 - Never invent an action.
 - Do not explain your decision.
@@ -182,7 +184,7 @@ Example:
 
     last_error = None
 
-    for max_tokens in (500, 1000):
+    for max_tokens in (2000, 3000):
         create_kwargs = {
             "model": MODEL,
             "messages": [

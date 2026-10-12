@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 from zipfile import ZipFile, ZIP_DEFLATED
@@ -32,6 +33,35 @@ def _get_groq_client() -> Groq:
             )
         _groq_client = Groq(api_key=api_key)
     return _groq_client
+
+
+def _clean_llm_text(text: str) -> str:
+    """Remove reasoning blocks (<think>...</think>) and meta-notes from LLM outputs."""
+    if not text:
+        return ""
+    if "<think>" in text:
+        if "</think>" in text:
+            text = text.split("</think>", 1)[1]
+        else:
+            text = text.split("<think>", 1)[0]
+    # Strip common LLM meta-notes
+    text = re.sub(r"\((?:Note|Note to assistant|Remark)[^)]*\)", "", text, flags=re.IGNORECASE | re.DOTALL)
+    text = re.sub(r"\[(?:Note|Note to assistant|Remark)[^\]]*\]", "", text, flags=re.IGNORECASE | re.DOTALL)
+    return text.strip()
+
+
+def _get_pdf_engine():
+    """Retrieve PdfReader and PdfWriter with seamless pypdf and PyPDF2 fallback."""
+    try:
+        from pypdf import PdfReader, PdfWriter
+        return PdfReader, PdfWriter
+    except ImportError:
+        try:
+            from PyPDF2 import PdfReader, PdfWriter
+            return PdfReader, PdfWriter
+        except ImportError:
+            raise ValueError("PDF operations require 'pypdf' or 'PyPDF2'. Please install pypdf.")
+
 
 
 def media_root(user=None) -> Path:
@@ -570,6 +600,7 @@ def rename_file(file_id, new_name: str, user=None) -> dict:
 def delete_file(file_id, user=None) -> dict:
     """Delete a file from the database and remove it from disk."""
     file = get_file_object(file_id, user=user)
+    file_id_val = file.id
     name = file.original_name
     folder_name = file.folder.name if file.folder else None
     file_path = Path(file.file.path).resolve()
@@ -583,7 +614,7 @@ def delete_file(file_id, user=None) -> dict:
 
     return {
         "message": "File deleted successfully",
-        "id": file_id,
+        "id": file_id_val,
         "name": name,
         "folder": folder_name,
         "deleted_from_disk": disk_deleted,
@@ -639,7 +670,7 @@ def create_zip(file_ids, zip_name: str, user=None) -> dict:
     if not zip_name.endswith(".zip"):
         zip_name += ".zip"
 
-    parsed_file_ids = parse_file_ids(file_ids)
+    parsed_file_ids = parse_file_ids(file_ids, user=user)
 
     mroot = media_root(user=user)
     zip_directory = (mroot / "archives").resolve()
@@ -683,6 +714,7 @@ def create_zip(file_ids, zip_name: str, user=None) -> dict:
     return {
         "message": "ZIP created successfully",
         "zip_name": zip_name,
+        "name": zip_name,
         "path": str(zip_path),
         "files": [f.original_name for f in files],
     }
@@ -771,7 +803,7 @@ def extract_text(file_id, max_pages: int = 30, max_chars: int = 50000, user=None
 
     if suffix == ".pdf":
         try:
-            from pypdf import PdfReader
+            PdfReader, _ = _get_pdf_engine()
             reader = PdfReader(str(file_path))
             total_pages = len(reader.pages)
             pages_read = min(total_pages, int(max_pages))
@@ -940,15 +972,7 @@ INSTRUCTIONS:
         summary_kwargs["reasoning_effort"] = "none"
 
     response = client.chat.completions.create(**summary_kwargs)
-
-    summary_text = response.choices[0].message.content.strip()
-    if "<think>" in summary_text:
-        if "</think>" in summary_text:
-            summary_text = summary_text.split("</think>", 1)[1]
-        else:
-            # No closing tag — discard everything from <think> onward
-            summary_text = summary_text.split("<think>", 1)[0]
-    summary_text = summary_text.strip()
+    summary_text = _clean_llm_text(response.choices[0].message.content)
 
     return {
         "message": "Document summarized successfully",
@@ -976,6 +1000,8 @@ def create_document(title: str, content: str, format: str = "docx", folder_name:
             f"Unsupported format '{format}'. Supported formats: 'docx', 'pdf', 'md', 'txt'."
         )
 
+    content = _clean_llm_text(content or "")
+
     # Determine destination folder and path
     mroot = media_root(user=user)
     if folder_name and folder_name.strip():
@@ -1000,7 +1026,6 @@ def create_document(title: str, content: str, format: str = "docx", folder_name:
     if format == "docx":
         try:
             import docx
-            from docx.shared import Pt, Inches, RGBColor
             doc = docx.Document()
             doc.add_heading(title, level=0)
 
@@ -1030,8 +1055,7 @@ def create_document(title: str, content: str, format: str = "docx", folder_name:
         try:
             from reportlab.lib.pagesizes import letter
             from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
-            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-            from reportlab.lib import colors
+            from reportlab.lib.styles import getSampleStyleSheet
 
             doc = SimpleDocTemplate(str(file_path), pagesize=letter)
             styles = getSampleStyleSheet()
@@ -1219,13 +1243,13 @@ def merge_pdfs(file_ids, output_name: str = "merged.pdf", folder_name: str = Non
     Merge multiple PDF files into one single PDF.
     Operates locally with pypdf for maximum speed and reliability.
     """
-    parsed_ids = parse_file_ids(file_ids)
+    parsed_ids = parse_file_ids(file_ids, user=user)
     if len(parsed_ids) < 2:
         raise ValueError("At least 2 PDF files are required to merge.")
 
     files = [get_file_object(fid, user=user) for fid in parsed_ids]
 
-    from pypdf import PdfWriter, PdfReader
+    PdfReader, PdfWriter = _get_pdf_engine()
     writer = PdfWriter()
 
     for uploaded_file in files:
@@ -1293,7 +1317,7 @@ def split_pdf(file_id, page_ranges: str = "1", output_name: str = None, folder_n
     if file_path.suffix.lower() != ".pdf":
         raise ValueError(f"'{uploaded_file.original_name}' is not a PDF file.")
 
-    from pypdf import PdfReader, PdfWriter
+    PdfReader, PdfWriter = _get_pdf_engine()
     reader = PdfReader(str(file_path))
     total_pages = len(reader.pages)
 
@@ -1419,7 +1443,7 @@ def compress_pdf(file_id, compression_level: str = "recommended", output_name: s
             used_engine = "local"
 
     if used_engine == "local":
-        from pypdf import PdfReader, PdfWriter
+        PdfReader, PdfWriter = _get_pdf_engine()
         reader = PdfReader(str(file_path))
         writer = PdfWriter()
         for page in reader.pages:
@@ -1586,15 +1610,7 @@ INSTRUCTIONS:
         qa_kwargs["reasoning_effort"] = "none"
 
     response = client.chat.completions.create(**qa_kwargs)
-    answer = response.choices[0].message.content.strip()
-
-    if "<think>" in answer:
-        if "</think>" in answer:
-            answer = answer.split("</think>", 1)[1]
-        else:
-            # No closing tag — discard everything from <think> onward
-            answer = answer.split("<think>", 1)[0]
-    answer = answer.strip()
+    answer = _clean_llm_text(response.choices[0].message.content)
 
     return {
         "message": "Question answered successfully",
@@ -1650,7 +1666,7 @@ def ocr_document(file_id, lang: str = "en", user=None) -> dict:
             raise ValueError("OCR engine is not available on this system.")
 
     elif suffix == ".pdf":
-        from pypdf import PdfReader
+        PdfReader, _ = _get_pdf_engine()
         reader = PdfReader(str(file_path))
         from PIL import Image
         import io
@@ -1876,7 +1892,7 @@ Output strictly clean Markdown. Never output <think> tags."""
     if "qwen" in model.lower():
         quiz_kwargs["reasoning_effort"] = "none"
     resp = client.chat.completions.create(**quiz_kwargs)
-    quiz_content = resp.choices[0].message.content.strip()
+    quiz_content = _clean_llm_text(resp.choices[0].message.content)
 
     return {
         "status": "success",
@@ -1925,7 +1941,7 @@ Output strictly clean Markdown. Never output <think> tags."""
     if "qwen" in model.lower():
         fc_kwargs["reasoning_effort"] = "none"
     resp = client.chat.completions.create(**fc_kwargs)
-    cards_content = resp.choices[0].message.content.strip()
+    cards_content = _clean_llm_text(resp.choices[0].message.content)
 
     return {
         "status": "success",
@@ -1952,7 +1968,7 @@ def protect_pdf(file_id, password: str, output_name: str = None, folder_name: st
     if file_path.suffix.lower() != ".pdf":
         raise ValueError(f"'{uploaded_file.original_name}' is not a PDF file.")
 
-    from pypdf import PdfReader, PdfWriter
+    PdfReader, PdfWriter = _get_pdf_engine()
     reader = PdfReader(str(file_path))
     writer = PdfWriter()
     for page in reader.pages:
@@ -2020,7 +2036,7 @@ def unlock_pdf(file_id, password: str, output_name: str = None, folder_name: str
     if file_path.suffix.lower() != ".pdf":
         raise ValueError(f"'{uploaded_file.original_name}' is not a PDF file.")
 
-    from pypdf import PdfReader, PdfWriter
+    PdfReader, PdfWriter = _get_pdf_engine()
     reader = PdfReader(str(file_path))
 
     if not reader.is_encrypted:
@@ -2099,7 +2115,7 @@ def watermark_pdf(file_id, watermark_text: str = "CONFIDENTIAL", output_name: st
     import io
     from reportlab.pdfgen import canvas
     from reportlab.lib import colors
-    from pypdf import PdfReader, PdfWriter
+    PdfReader, PdfWriter = _get_pdf_engine()
 
     reader = PdfReader(str(file_path))
     writer = PdfWriter()
@@ -2174,7 +2190,10 @@ def find_duplicates(user=None) -> dict:
     Identify duplicate files in the user's workspace using cryptographic SHA-256 hashing.
     """
     import hashlib
-    files = list(UploadedFile.objects.filter(user=user).select_related("folder"))
+    qs = UploadedFile.objects.select_related("folder")
+    if user:
+        qs = qs.filter(user=user)
+    files = list(qs)
     hashes = {}
     duplicates = []
     wasted_bytes = 0
@@ -2260,7 +2279,7 @@ Translate accurately into {target_language}. Format strictly in clean Markdown. 
     if "qwen" in model.lower():
         trans_kwargs["reasoning_effort"] = "none"
     resp = client.chat.completions.create(**trans_kwargs)
-    translation = resp.choices[0].message.content.strip()
+    translation = _clean_llm_text(resp.choices[0].message.content)
 
     return {
         "status": "success",
@@ -2278,8 +2297,13 @@ def workspace_stats(user=None) -> dict:
     Compute comprehensive workspace metrics: storage used, breakdown by type,
     and visual progress bars.
     """
-    files = list(UploadedFile.objects.filter(user=user).select_related("folder"))
-    folders = list(Folder.objects.filter(user=user))
+    files_qs = UploadedFile.objects.select_related("folder")
+    folders_qs = Folder.objects.all()
+    if user:
+        files_qs = files_qs.filter(user=user)
+        folders_qs = folders_qs.filter(user=user)
+    files = list(files_qs)
+    folders = list(folders_qs)
 
     type_counts = {"PDF": 0, "Word": 0, "PowerPoint": 0, "Excel": 0, "Image": 0, "Archive": 0, "Other": 0}
     total_size = 0
